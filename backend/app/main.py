@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.db import Base, engine
+from app.models import HCP, Interaction  # Import models for table creation
 
 # Configure structured logging
 logging.basicConfig(
