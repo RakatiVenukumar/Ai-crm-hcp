@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.db import Base, engine
 from app.models import HCP, Interaction  # Import models for table creation
-from app.routes import hcp_router, interaction_router
+from app.routes import hcp_router, interaction_router, agent_router
 
 # Configure structured logging
 logging.basicConfig(
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
 
     app.include_router(interaction_router)
     app.include_router(hcp_router)
+    app.include_router(agent_router)
 
     return app
 
