@@ -7,13 +7,20 @@ from typing import TypedDict, Any, Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from app.services.groq_service import GroqService
+from app.tools import (
+    LogInteractionTool,
+    EditInteractionTool,
+    InteractionSummaryTool,
+    FollowupRecommendationTool,
+    SalesInsightTool
+)
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """State object passed through the agent graph"""
     user_input: str  # Original user input
     extracted_data: Optional[dict]  # Data extracted by LLM (entities, summary, etc.)
@@ -23,6 +30,7 @@ class AgentState(TypedDict):
     tool_result: Optional[Any]  # Result from tool execution
     conversation_history: list  # List of messages for multi-turn context
     is_complete: bool  # Whether the agent has finished processing
+    tool_queue: list  # Queue of tools to execute in sequence
 
 
 class CRMAgent:
@@ -39,8 +47,25 @@ class CRMAgent:
     """
     
     def __init__(self):
-        """Initialize the agent with GroqService and LangGraph"""
+        """Initialize the agent with GroqService, all tools, and LangGraph"""
         self.groq_service = GroqService()
+        
+        # Initialize all tools
+        self.log_interaction_tool = LogInteractionTool()
+        self.edit_interaction_tool = EditInteractionTool()
+        self.summary_tool = InteractionSummaryTool()
+        self.followup_tool = FollowupRecommendationTool()
+        self.sales_insight_tool = SalesInsightTool()
+        
+        # Register tools for easy lookup
+        self.tools = {
+            "log_interaction": self.log_interaction_tool,
+            "edit_interaction": self.edit_interaction_tool,
+            "summarize": self.summary_tool,
+            "followup": self.followup_tool,
+            "sales_insight": self.sales_insight_tool
+        }
+        
         self.graph = self._build_graph()
         self.compiled_graph = self.graph.compile()
     
@@ -128,12 +153,18 @@ class CRMAgent:
     
     def _router_node(self, state: AgentState) -> AgentState:
         """
-        Router node that decides which tool to execute next.
+        Router node that decides which tool(s) to execute next.
         
-        Logic:
-        - If extraction successful and HCP name found, set tool to log_interaction
-        - Otherwise, if more analysis needed, set appropriate tool
-        - Otherwise, mark as complete (finalize)
+        Tool routing logic:
+        1. If no extracted data, finalize with error
+        2. If HCP name found and interaction_type present -> log_interaction
+        3. After logging, queue up analysis tools:
+           - summarize (if long interaction_notes)
+           - followup (to generate next steps)
+           - sales_insight (to identify opportunities)
+        4. If editing existing interaction -> edit_interaction
+        
+        Returns tools to execute in priority order via tool queue.
         """
         logger.info("[ROUTER] Deciding next action...")
         
@@ -142,11 +173,48 @@ class CRMAgent:
             state["is_complete"] = True
             return state
         
-        # Default: log the interaction (Step 9 tool)
-        if "hcp_name" in state["extracted_data"] and state["extracted_data"]["hcp_name"]:
+        extracted = state["extracted_data"]
+        
+        # Initialize tool queue if not present
+        if "tool_queue" not in state:
+            state["tool_queue"] = []
+        
+        # Already have a tool in queue that was just set by agent/previous router call
+        if state["current_tool"] is not None:
+            logger.info(f"[ROUTER] Tool already queued: {state['current_tool']}")
+            return state
+        
+        # Check if we have a tool queue from previous execution
+        if state.get("tool_queue"):
+            state["current_tool"] = state["tool_queue"].pop(0)
+            state["tool_input"] = {"data": extracted}
+            logger.info(f"[ROUTER] Executing next queued tool: {state['current_tool']}")
+            return state
+        
+        # If editing an existing interaction (has interaction_id)
+        if "interaction_id" in extracted and extracted["interaction_id"]:
+            state["current_tool"] = "edit_interaction"
+            state["tool_input"] = extracted
+            logger.info("[ROUTER] Routing to edit_interaction tool")
+            return state
+        
+        # If creating new interaction (has HCP name and interaction data)
+        if "hcp_name" in extracted and extracted["hcp_name"]:
+            # Queue up all analysis tools after logging
+            has_notes = "interaction_notes" in extracted and extracted["interaction_notes"]
+            
+            tools_to_queue = []
+            
+            # Always queue summary and followup if we have notes
+            if has_notes:
+                tools_to_queue.extend(["summarize", "followup", "sales_insight"])
+            
+            # Log interaction is the first priority
             state["current_tool"] = "log_interaction"
-            state["tool_input"] = state["extracted_data"]
-            logger.info("[ROUTER] Routing to log_interaction tool")
+            state["tool_input"] = extracted
+            state["tool_queue"] = tools_to_queue  # Queue remaining tools
+            
+            logger.info(f"[ROUTER] Routing to log_interaction; queued tools: {tools_to_queue}")
         else:
             state["is_complete"] = True
             logger.info("[ROUTER] No HCP name found; marking complete")
@@ -168,27 +236,98 @@ class CRMAgent:
     def _tool_executor_node(self, state: AgentState) -> AgentState:
         """
         Tool executor node.
-        Executes the selected tool (placeholder implementation).
+        Executes the selected tool and captures its result.
         
-        Note: Actual tool implementations will be added in Steps 9-13.
-        Currently just logs the tool call intent.
+        Supports:
+        - log_interaction: Persist extracted data to database (Step 9)
+        - edit_interaction: Update existing interaction (Step 10)
+        - summarize: Generate professional summary (Step 11)
+        - followup: Generate follow-up recommendations (Step 12)
+        - sales_insight: Extract sales insights (Step 13)
         """
         tool_name = state["current_tool"]
         tool_input = state["tool_input"]
         
         logger.info(f"[TOOL_EXECUTOR] Executing tool: {tool_name}")
-        logger.info(f"[TOOL_EXECUTOR] Input: {tool_input}")
+        logger.info(f"[TOOL_EXECUTOR] Input keys: {list(tool_input.keys()) if isinstance(tool_input, dict) else 'N/A'}")
         
-        # Placeholder: tools will be implemented in Steps 9-13
-        state["tool_result"] = {
-            "status": "pending",
-            "message": f"Tool '{tool_name}' will be implemented in subsequent steps",
-            "tool_input": tool_input
-        }
+        try:
+            # Get the tool from registry
+            tool = self.tools.get(tool_name)
+            if not tool:
+                raise ValueError(f"Unknown tool: {tool_name}")
+            
+            # Execute the tool with appropriate parameters
+            if tool_name == "log_interaction":
+                result = tool.execute(**tool_input)
+            
+            elif tool_name == "edit_interaction":
+                result = tool.execute(**tool_input)
+            
+            elif tool_name == "summarize":
+                # Extract notes from input or state
+                notes = tool_input.get("interaction_notes") or tool_input.get("data", {}).get("interaction_notes", "")
+                context = {
+                    "hcp_name": tool_input.get("hcp_name") or tool_input.get("data", {}).get("hcp_name"),
+                    "interaction_type": tool_input.get("interaction_type") or tool_input.get("data", {}).get("interaction_type")
+                }
+                result = tool.execute(
+                    interaction_notes=notes,
+                    interaction_type=context.get("interaction_type"),
+                    hcp_name=context.get("hcp_name")
+                )
+            
+            elif tool_name == "followup":
+                # Generate followup recommendations
+                notes = tool_input.get("interaction_notes") or tool_input.get("data", {}).get("interaction_notes", "")
+                context = {
+                    "hcp_name": tool_input.get("hcp_name") or tool_input.get("data", {}).get("hcp_name"),
+                    "interaction_type": tool_input.get("interaction_type") or tool_input.get("data", {}).get("interaction_type"),
+                    "current_stage": tool_input.get("interaction_stage") or tool_input.get("data", {}).get("interaction_stage", "ongoing")
+                }
+                result = tool.execute(
+                    interaction_notes=notes,
+                    interaction_type=context.get("interaction_type"),
+                    hcp_name=context.get("hcp_name"),
+                    current_stage=context.get("current_stage")
+                )
+            
+            elif tool_name == "sales_insight":
+                # Generate sales insights
+                notes = tool_input.get("interaction_notes") or tool_input.get("data", {}).get("interaction_notes", "")
+                context = {
+                    "hcp_name": tool_input.get("hcp_name") or tool_input.get("data", {}).get("hcp_name"),
+                    "interaction_type": tool_input.get("interaction_type") or tool_input.get("data", {}).get("interaction_type"),
+                    "hcp_specialty": tool_input.get("hcp_specialty") or tool_input.get("data", {}).get("hcp_specialty")
+                }
+                result = tool.execute(
+                    interaction_notes=notes,
+                    interaction_type=context.get("interaction_type"),
+                    hcp_name=context.get("hcp_name"),
+                    hcp_specialty=context.get("hcp_specialty")
+                )
+            
+            else:
+                result = {"success": False, "error": f"Unsupported tool: {tool_name}"}
+            
+            state["tool_result"] = result
+            logger.info(f"[TOOL_EXECUTOR] Tool execution success: {result.get('success', False)}")
+            
+        except Exception as e:
+            logger.error(f"[TOOL_EXECUTOR] Error executing tool {tool_name}: {str(e)}")
+            state["tool_result"] = {
+                "success": False,
+                "error": str(e),
+                "tool": tool_name
+            }
         
-        # After first tool execution, mark as complete (subsequent steps will add more logic)
-        state["is_complete"] = True
-        state["current_tool"] = None
+        # If no more tools in queue, mark as complete
+        if not state.get("tool_queue"):
+            state["is_complete"] = True
+        else:
+            # Set next tool from queue
+            state["current_tool"] = state["tool_queue"].pop(0)
+            state["tool_input"] = {"data": state["extracted_data"]}
         
         return state
     
@@ -214,11 +353,17 @@ class CRMAgent:
         """
         Main entry point: Process user input through the agent.
         
+        Workflow:
+        1. Agent node extracts entities from natural language input
+        2. Router determines which tools to invoke based on extracted data
+        3. Tool executor invokes tools in sequence (log, summary, followup, insight)
+        4. Finalize node prepares comprehensive output
+        
         Args:
             user_input (str): Natural language description of HCP interaction
         
         Returns:
-            dict: Extracted interaction data with HCP info, sentiment, summary, etc.
+            dict: Extracted interaction data with all tool results
         """
         initial_state = AgentState(
             user_input=user_input,
@@ -237,12 +382,24 @@ class CRMAgent:
             # Execute the compiled graph
             final_state = self.compiled_graph.invoke(initial_state)
             logger.info("[CRM_AGENT] Agent processing completed successfully")
-            return final_state
+            
+            # Format response
+            return {
+                "success": True,
+                "user_input": user_input,
+                "extracted_data": final_state.get("extracted_data"),
+                "tool_results": {
+                    "last_result": final_state.get("tool_result")
+                },
+                "reasoning": final_state.get("reasoning"),
+                "complete": final_state.get("is_complete", True)
+            }
         except Exception as e:
             logger.error(f"[CRM_AGENT] Error during agent processing: {str(e)}")
             return {
+                "success": False,
                 "error": str(e),
                 "user_input": user_input,
                 "extracted_data": None,
-                "processing_complete": False
+                "complete": False
             }
