@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.db import Base, engine
 from app.models import HCP, Interaction  # Import models for table creation
+from app.routes import interaction_router
 
 # Configure structured logging
 logging.basicConfig(
@@ -53,6 +54,8 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check() -> dict[str, str]:
         return {"status": "ok", "service": "ai-crm-hcp"}
+
+    app.include_router(interaction_router)
 
     return app
 
