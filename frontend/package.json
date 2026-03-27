@@ -1,0 +1,13 @@
+{
+  "name": "ai-crm-hcp-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@fontsource/inter": "^5.0.18",
+    "@reduxjs/toolkit": "^2.6.0",
+    "axios": "^1.8.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-redux": "^9.2.0"
+  }
+}
