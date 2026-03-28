@@ -6,8 +6,11 @@ export const agentService = {
     return data;
   },
 
-  async chat(userInput) {
-    const { data } = await apiClient.post('/agent/chat', { user_input: userInput });
+  async chat(userInput, conversationHistory = []) {
+    const { data } = await apiClient.post('/agent/chat', { 
+      user_input: userInput,
+      conversation_history: conversationHistory,
+    });
     return data;
   },
 };

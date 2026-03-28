@@ -4,8 +4,10 @@ Exposes the CRMAgent via REST API for natural language input.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from app.database import get_db
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,11 +24,16 @@ class AgentChatRequest(BaseModel):
         max_length=5000,
         description="Natural language description of HCP interaction"
     )
+    conversation_history: Optional[list] = Field(
+        default=[],
+        description="Previous conversation messages for context"
+    )
     
     class Config:
         json_schema_extra = {
             "example": {
-                "user_input": "Had a meeting with Dr. Smith about our cardiac product line yesterday afternoon. Very positive reception."
+                "user_input": "Had a meeting with Dr. Smith about our cardiac product line yesterday afternoon. Very positive reception.",
+                "conversation_history": []
             }
         }
 
@@ -38,6 +45,10 @@ class AgentChatResponse(BaseModel):
     extracted_data: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Extracted HCP interaction data (HCP name, sentiment, products, etc.)"
+    )
+    response_message: Optional[str] = Field(
+        default=None,
+        description="Natural language response/acknowledgment of the extraction"
     )
     tool_results: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -103,7 +114,7 @@ def get_agent():
 # ============================================================================
 
 @router.post("/chat", response_model=AgentChatResponse, status_code=status.HTTP_200_OK)
-async def agent_chat(request: AgentChatRequest) -> AgentChatResponse:
+async def agent_chat(request: AgentChatRequest, db: Session = Depends(get_db)) -> AgentChatResponse:
     """
     Process natural language HCP interaction input through the AI agent.
     
@@ -116,6 +127,7 @@ async def agent_chat(request: AgentChatRequest) -> AgentChatResponse:
     
     Args:
         request: AgentChatRequest with user_input (natural language description)
+                and optional conversation_history for multi-turn context
     
     Returns:
         AgentChatResponse with extracted data and tool results
@@ -125,7 +137,8 @@ async def agent_chat(request: AgentChatRequest) -> AgentChatResponse:
         curl -X POST "http://localhost:8000/agent/chat" \
           -H "Content-Type: application/json" \
           -d '{
-            "user_input": "Met with Dr. Chen at Central Hospital. Very positive about our joint replacement system. Wants a pilot program."
+            "user_input": "Met with Dr. Chen at Central Hospital. Very positive about our joint replacement system. Wants a pilot program.",
+            "conversation_history": []
           }'
         ```
     """
@@ -145,15 +158,16 @@ async def agent_chat(request: AgentChatRequest) -> AgentChatResponse:
         # Get agent instance
         agent = get_agent()
         
-        # Process input through agent
+        # Process input through agent with conversation history and db session
         logger.info("[AGENT_CHAT] Processing input through CRMAgent...")
-        result = agent.process_input(request.user_input)
+        result = agent.process_input(request.user_input, request.conversation_history or [], db)
         
         # Map agent output to response schema
         response = AgentChatResponse(
             success=result.get("success", False),
             user_input=result.get("user_input", request.user_input),
             extracted_data=result.get("extracted_data"),
+            response_message=result.get("response_message"),
             tool_results=result.get("tool_results"),
             reasoning=result.get("reasoning"),
             complete=result.get("complete", False),

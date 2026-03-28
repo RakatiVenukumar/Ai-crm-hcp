@@ -5,8 +5,8 @@ export const checkAgentHealth = createAsyncThunk('agent/health', async () => {
   return agentService.health();
 });
 
-export const runAgentChat = createAsyncThunk('agent/chat', async (userInput) => {
-  return agentService.chat(userInput);
+export const runAgentChat = createAsyncThunk('agent/chat', async ({ userInput, conversationHistory }) => {
+  return agentService.chat(userInput, conversationHistory);
 });
 
 const agentSlice = createSlice({
@@ -15,13 +15,15 @@ const agentSlice = createSlice({
     health: null,
     loading: false,
     error: null,
+    conversationHistory: [],
     lastResponse: null,
   },
   reducers: {
     clearAgentError(state) {
       state.error = null;
     },
-    clearAgentResponse(state) {
+    clearConversationHistory(state) {
+      state.conversationHistory = [];
       state.lastResponse = null;
     },
   },
@@ -36,9 +38,29 @@ const agentSlice = createSlice({
       })
       .addCase(runAgentChat.fulfilled, (state, action) => {
         state.loading = false;
-        state.lastResponse = action.payload;
-        if (action.payload?.success === false) {
-          state.error = action.payload.error || 'Agent could not process the request';
+        const userInput = action.meta.arg.userInput;
+        const response = action.payload;
+        
+        // Add user message to history
+        state.conversationHistory.push({
+          role: 'user',
+          content: userInput,
+          timestamp: new Date().toISOString(),
+        });
+        
+        // Add assistant message to history (use response_message if available, otherwise show summary)
+        const assistantContent = response?.response_message || 
+                                 `Recorded: ${response?.extracted_data?.hcp_name || 'HCP'} - ${response?.extracted_data?.sentiment || 'neutral'}`;
+        
+        state.conversationHistory.push({
+          role: 'assistant',
+          content: assistantContent,
+          timestamp: new Date().toISOString(),
+        });
+        
+        state.lastResponse = response;
+        if (response?.success === false) {
+          state.error = response.error || 'Agent could not process the request';
         } else {
           state.error = null;
         }
@@ -50,5 +72,5 @@ const agentSlice = createSlice({
   },
 });
 
-export const { clearAgentError, clearAgentResponse } = agentSlice.actions;
+export const { clearAgentError, clearConversationHistory } = agentSlice.actions;
 export default agentSlice.reducer;

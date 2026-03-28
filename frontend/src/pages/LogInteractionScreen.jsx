@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import AgentChatPanel from '../components/AgentChatPanel';
 import InteractionEditor from '../components/InteractionEditor';
 import RecentTimeline from '../components/RecentTimeline';
-import { checkAgentHealth, runAgentChat } from '../redux/slices/agentSlice';
+import { checkAgentHealth, runAgentChat, clearConversationHistory } from '../redux/slices/agentSlice';
 import { fetchHcps } from '../redux/slices/hcpSlice';
 import { fetchTimeline, saveInteraction } from '../redux/slices/interactionSlice';
 import { hcpService } from '../services/hcpService';
@@ -26,6 +26,69 @@ const toText = (value) => {
   return value || '';
 };
 
+const parseTimePhrase = (timePhrase) => {
+  if (!timePhrase) return null;
+  
+  const timeStr = String(timePhrase).toLowerCase().trim();
+  
+  // If it's already in HH:MM format, return as is
+  if (/^\d{1,2}:\d{2}$/.test(timeStr)) {
+    return timeStr;
+  }
+  
+  // Parse common time phrases
+  const morningRegex = /\bmorning\b/i;
+  const afternoonRegex = /\bafternoon\b/i;
+  const eveningRegex = /\bevening\b/i;
+  
+  if (morningRegex.test(timeStr)) {
+    return '09:00'; // Default to 9 AM
+  }
+  if (afternoonRegex.test(timeStr)) {
+    return '14:00'; // Default to 2 PM
+  }
+  if (eveningRegex.test(timeStr)) {
+    return '17:00'; // Default to 5 PM
+  }
+  
+  // Try to extract time digits (e.g., "3:30", "10 AM", "2pm")
+  const timeMatch = timeStr.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+  if (timeMatch) {
+    let hour = parseInt(timeMatch[1]);
+    const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const period = timeMatch[3] ? timeMatch[3].toLowerCase() : '';
+    
+    if (period === 'pm' && hour !== 12) {
+      hour += 12;
+    }
+    if (period === 'am' && hour === 12) {
+      hour = 0;
+    }
+    
+    const hourStr = String(hour).padStart(2, '0');
+    const minStr = String(minute).padStart(2, '0');
+    return `${hourStr}:${minStr}`;
+  }
+  
+  // If we got a time phrase but couldn't parse it, return as is
+  return timePhrase;
+};
+
+const getInitialFormState = () => ({
+  hcp_name: '',
+  interaction_type: 'meeting',
+  date: getToday(),
+  time: '',
+  attendees: '',
+  topics_discussed: '',
+  materials_shared: '',
+  samples_distributed: '',
+  sentiment: '',
+  outcomes: '',
+  follow_up_actions: '',
+  summary: '',
+});
+
 function LogInteractionScreen() {
   const dispatch = useDispatch();
   const agent = useSelector((state) => state.agent);
@@ -33,21 +96,9 @@ function LogInteractionScreen() {
   const interaction = useSelector((state) => state.interaction);
 
   const [saveSuccessMessage, setSaveSuccessMessage] = useState('');
+  const [lastAnalyzedNotes, setLastAnalyzedNotes] = useState('');
 
-  const [form, setForm] = useState({
-    hcp_name: '',
-    interaction_type: 'meeting',
-    date: getToday(),
-    time: '',
-    attendees: '',
-    topics_discussed: '',
-    materials_shared: '',
-    samples_distributed: '',
-    sentiment: '',
-    outcomes: '',
-    follow_up_actions: '',
-    summary: '',
-  });
+  const [form, setForm] = useState(getInitialFormState());
 
   useEffect(() => {
     dispatch(checkAgentHealth());
@@ -61,10 +112,21 @@ function LogInteractionScreen() {
       return;
     }
 
+    const isNameCorrection = /\b(sorry|correction|name)\b/i.test(lastAnalyzedNotes)
+      && /\bnot\b/i.test(lastAnalyzedNotes);
+
+    if (isNameCorrection) {
+      setForm((prev) => ({
+        ...prev,
+        hcp_name: extracted.hcp_name || prev.hcp_name,
+      }));
+      return;
+    }
+
     setForm((prev) => ({
       ...prev,
       hcp_name: extracted.hcp_name || prev.hcp_name,
-      time: extracted.time || extracted.interaction_time || prev.time || getCurrentTime(),
+      time: parseTimePhrase(extracted.time) || prev.time || getCurrentTime(),
       attendees: toText(extracted.attendees || prev.attendees || 'Not specified'),
       topics_discussed: toText(extracted.key_topics || extracted.products_discussed || prev.topics_discussed),
       materials_shared: toText(extracted.materials_shared || prev.materials_shared || 'Not specified'),
@@ -74,11 +136,24 @@ function LogInteractionScreen() {
       summary: extracted.summary || prev.summary,
       outcomes: toText(extracted.outcomes || extracted.opportunities || prev.outcomes || 'Not specified'),
     }));
-  }, [agent.lastResponse]);
+  }, [agent.lastResponse, lastAnalyzedNotes]);
 
   const handleAnalyze = (notes) => {
     setSaveSuccessMessage('');
-    dispatch(runAgentChat(notes));
+    setLastAnalyzedNotes(notes || '');
+    dispatch(runAgentChat({ 
+      userInput: notes, 
+      conversationHistory: agent.conversationHistory 
+    }));
+  };
+
+  const handleClearHistory = () => {
+    if (window.confirm('Are you sure you want to delete the entire conversation? This cannot be undone.')) {
+      dispatch(clearConversationHistory());
+      setForm(getInitialFormState());
+      setLastAnalyzedNotes('');
+      setSaveSuccessMessage('');
+    }
   };
 
   const handleFormChange = (field, value) => {
@@ -147,6 +222,8 @@ function LogInteractionScreen() {
           onAnalyze={handleAnalyze}
           health={agent.health}
           error={agent.error}
+          conversationHistory={agent.conversationHistory}
+          onClearHistory={handleClearHistory}
         />
 
         <InteractionEditor

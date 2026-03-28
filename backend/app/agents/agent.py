@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     conversation_history: list  # List of messages for multi-turn context
     is_complete: bool  # Whether the agent has finished processing
     tool_queue: list  # Queue of tools to execute in sequence
+    db: Optional[Any]  # Database session for tool execution
 
 
 class CRMAgent:
@@ -118,25 +119,24 @@ class CRMAgent:
         """
         LLM reasoning node.
         Receives user input and uses LLM to understand what data needs extraction.
+        Includes conversation history for multi-turn context.
         
         Returns:
             Updated state with reasoning and extracted_data
         """
         logger.info(f"[AGENT] Processing input: {state['user_input'][:100]}...")
         
-        # Build conversation context
-        system_prompt = """You are an AI assistant helping a pharmaceutical sales representative 
-        log and analyze HCP (Healthcare Professional) interactions.
+        # Build conversation context from history
+        conversation_context = ""
+        if state.get("conversation_history"):
+            for msg in state["conversation_history"][:-1]:  # Exclude current message
+                if hasattr(msg, 'content'):
+                    conversation_context += f"{msg}\n"
         
-        When given an interaction description, your job is to:
-        1. Extract key information (HCP name, products discussed, sentiment, etc.)
-        2. Provide professional summary
-        3. Generate follow-up recommendations
-        4. Identify sales insights
-        
-        Respond with structured data that can be saved to the CRM."""
-        
+        # Prepare combined message with context
         user_message = state["user_input"]
+        if conversation_context:
+            user_message = f"Previous conversation:\n{conversation_context}\n\nNew message:\n{user_message}"
         
         # Call LLM to extract entities
         try:
@@ -257,12 +257,15 @@ class CRMAgent:
             if not tool:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
+            # Get database session from state
+            db = state.get("db")
+            
             # Execute the tool with appropriate parameters
             if tool_name == "log_interaction":
-                result = tool.execute(**tool_input)
+                result = tool.execute(db=db, **tool_input)
             
             elif tool_name == "edit_interaction":
-                result = tool.execute(**tool_input)
+                result = tool.execute(db=db, **tool_input)
             
             elif tool_name == "summarize":
                 # Extract notes from input or state
@@ -349,7 +352,7 @@ class CRMAgent:
         logger.info("[FINALIZE] Agent processing complete")
         return state
     
-    def process_input(self, user_input: str) -> dict:
+    def process_input(self, user_input: str, conversation_history: list = None, db: Any = None) -> dict:
         """
         Main entry point: Process user input through the agent.
         
@@ -361,10 +364,25 @@ class CRMAgent:
         
         Args:
             user_input (str): Natural language description of HCP interaction
+            conversation_history (list): Previous conversation messages for context
+            db (Session): SQLAlchemy database session for tool execution
         
         Returns:
             dict: Extracted interaction data with all tool results
         """
+        # Build conversation context from previous messages
+        messages = []
+        if conversation_history:
+            for msg in conversation_history:
+                if isinstance(msg, dict):
+                    if msg.get('role') == 'user':
+                        messages.append(HumanMessage(content=msg.get('content', '')))
+                    elif msg.get('role') == 'assistant':
+                        messages.append(AIMessage(content=str(msg.get('content', ''))))
+        
+        # Add current user input
+        messages.append(HumanMessage(content=user_input))
+        
         initial_state = AgentState(
             user_input=user_input,
             extracted_data=None,
@@ -372,8 +390,9 @@ class CRMAgent:
             current_tool=None,
             tool_input=None,
             tool_result=None,
-            conversation_history=[HumanMessage(content=user_input)],
-            is_complete=False
+            conversation_history=messages,
+            is_complete=False,
+            db=db
         )
         
         logger.info(f"[CRM_AGENT] Starting agent processing for: {user_input[:80]}...")
@@ -410,10 +429,16 @@ class CRMAgent:
                 }
             
             # Format response
+            response_message = self.groq_service.generate_response_message(
+                extracted_data,
+                is_correction=self._is_name_correction(user_input)
+            )
+            
             return {
                 "success": True,
                 "user_input": user_input,
                 "extracted_data": extracted_data,
+                "response_message": response_message,
                 "tool_results": {
                     "last_result": final_state.get("tool_result")
                 },
@@ -429,3 +454,11 @@ class CRMAgent:
                 "extracted_data": None,
                 "complete": False
             }
+    
+    def _is_name_correction(self, user_input: str) -> bool:
+        """
+        Detect if the input is a name correction (e.g., 'Sorry, name was Dr Venu not Dr Patel').
+        """
+        correction_keywords = ['sorry', 'correction', 'name', 'not', 'actually', 'oops']
+        lower_input = user_input.lower()
+        return sum(keyword in lower_input for keyword in correction_keywords) >= 2

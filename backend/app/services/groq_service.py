@@ -54,11 +54,20 @@ class GroqService:
             "hcp_name, products_discussed, sentiment, summary, "
             "follow_up_recommendation, key_topics, time, attendees, "
             "materials_shared, samples_distributed, outcomes. "
-            "Use null for unknown fields."
+            "For 'time': Extract any specific time mentioned (e.g., '3:30 PM', '14:30', 'afternoon', '10 AM'). "
+            "If a time phrase is mentioned, convert it to HH:MM format (24-hour) or keep the exact phrasing if ambiguous. "
+            "For follow_up_recommendation, suggest 1-2 concrete next steps. "
+            "Use null for unknown fields. Never leave follow_up_recommendation as null if sentiment is positive or neutral."
         )
         user_prompt = f"Extract fields from this interaction note:\n\n{user_input}"
         result = self._chat(system_prompt=system_prompt, user_prompt=user_prompt)
-        return self._safe_json_parse(result)
+        parsed = self._safe_json_parse(result)
+        
+        # Ensure follow_up_recommendation has a value if not provided
+        if not parsed.get('follow_up_recommendation') and parsed.get('sentiment') in ['positive', 'neutral']:
+            parsed['follow_up_recommendation'] = 'Send product documentation and schedule follow-up call'
+        
+        return parsed
 
     def summarize_interaction(self, interaction_notes: str) -> str:
         system_prompt = (
@@ -86,3 +95,24 @@ class GroqService:
         user_prompt = f"Analyze this interaction:\n\n{interaction_notes}"
         result = self._chat(system_prompt=system_prompt, user_prompt=user_prompt)
         return self._safe_json_parse(result)
+    
+    def generate_response_message(self, extracted_data: Dict[str, Any], is_correction: bool = False) -> str:
+        """
+        Generate a natural language response acknowledging the extraction.
+        """
+        hcp_name = extracted_data.get('hcp_name', 'HCP')
+        sentiment = extracted_data.get('sentiment', 'neutral')
+        followup = extracted_data.get('follow_up_recommendation', '')
+        products = extracted_data.get('products_discussed', [])
+        
+        product_list = ", ".join(products) if products else "products discussed"
+        
+        if is_correction:
+            message = f"✓ Updated: HCP is {hcp_name}, sentiment is {sentiment.capitalize()}. Discussed {product_list}."
+        else:
+            message = f"✓ Recorded: {hcp_name} - Sentiment: {sentiment.capitalize()}. Discussed {product_list}."
+        
+        if followup:
+            message += f" Next step: {followup}"
+        
+        return message
