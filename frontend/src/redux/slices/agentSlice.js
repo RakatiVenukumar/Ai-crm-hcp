@@ -37,6 +37,11 @@ const agentSlice = createSlice({
       .addCase(runAgentChat.fulfilled, (state, action) => {
         state.loading = false;
         state.lastResponse = action.payload;
+        if (action.payload?.success === false) {
+          state.error = action.payload.error || 'Agent could not process the request';
+        } else {
+          state.error = null;
+        }
       })
       .addCase(runAgentChat.rejected, (state, action) => {
         state.loading = false;

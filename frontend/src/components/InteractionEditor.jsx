@@ -3,7 +3,6 @@ function InteractionEditor({
   onChange,
   onSave,
   saving,
-  hcpItems,
   saveError,
   saveSuccessMessage,
   extractedData,
@@ -20,14 +19,11 @@ function InteractionEditor({
       <div className="form-grid">
         <label>
           HCP
-          <select value={form.hcp_id} onChange={updateField('hcp_id')}>
-            <option value="">Select HCP</option>
-            {hcpItems.map((hcp) => (
-              <option key={hcp.id} value={hcp.id}>
-                {hcp.name}
-              </option>
-            ))}
-          </select>
+          <input
+            value={form.hcp_name}
+            onChange={updateField('hcp_name')}
+            placeholder="Detected from AI or type manually"
+          />
         </label>
 
         <label>
@@ -59,7 +55,7 @@ function InteractionEditor({
 
         <label>
           Attendees
-          <input value={form.attendees} onChange={updateField('attendees')} placeholder="Dr. Smith, Nurse Lead" />
+          <input value={form.attendees} onChange={updateField('attendees')} placeholder="" />
         </label>
       </div>
 

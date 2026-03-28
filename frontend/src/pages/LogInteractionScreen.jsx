@@ -6,8 +6,15 @@ import RecentTimeline from '../components/RecentTimeline';
 import { checkAgentHealth, runAgentChat } from '../redux/slices/agentSlice';
 import { fetchHcps } from '../redux/slices/hcpSlice';
 import { fetchTimeline, saveInteraction } from '../redux/slices/interactionSlice';
+import { hcpService } from '../services/hcpService';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
+const getCurrentTime = () => {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+};
 
 const toText = (value) => {
   if (Array.isArray(value)) {
@@ -28,7 +35,7 @@ function LogInteractionScreen() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState('');
 
   const [form, setForm] = useState({
-    hcp_id: '',
+    hcp_name: '',
     interaction_type: 'meeting',
     date: getToday(),
     time: '',
@@ -56,11 +63,16 @@ function LogInteractionScreen() {
 
     setForm((prev) => ({
       ...prev,
+      hcp_name: extracted.hcp_name || prev.hcp_name,
+      time: extracted.time || extracted.interaction_time || prev.time || getCurrentTime(),
+      attendees: toText(extracted.attendees || prev.attendees || 'Not specified'),
       topics_discussed: toText(extracted.key_topics || extracted.products_discussed || prev.topics_discussed),
+      materials_shared: toText(extracted.materials_shared || prev.materials_shared || 'Not specified'),
+      samples_distributed: toText(extracted.samples_distributed || prev.samples_distributed || 'Not specified'),
       sentiment: extracted.sentiment || prev.sentiment,
       follow_up_actions: toText(extracted.follow_up_recommendation || prev.follow_up_actions),
       summary: extracted.summary || prev.summary,
-      outcomes: toText(extracted.opportunities || prev.outcomes),
+      outcomes: toText(extracted.outcomes || extracted.opportunities || prev.outcomes || 'Not specified'),
     }));
   }, [agent.lastResponse]);
 
@@ -73,8 +85,24 @@ function LogInteractionScreen() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const resolveHcpId = async (hcpName) => {
+    const normalizedName = (hcpName || '').trim();
+    if (!normalizedName) {
+      return null;
+    }
+
+    const existing = hcp.items.find((item) => item.name.toLowerCase() === normalizedName.toLowerCase());
+    if (existing) {
+      return existing.id;
+    }
+
+    const created = await hcpService.create({ name: normalizedName });
+    dispatch(fetchHcps());
+    return created.id;
+  };
+
   const canSave = useMemo(() => {
-    return form.hcp_id && form.interaction_type && form.date;
+    return form.hcp_name.trim() && form.interaction_type && form.date;
   }, [form]);
 
   const handleSave = async () => {
@@ -83,10 +111,16 @@ function LogInteractionScreen() {
       return;
     }
 
+    const hcpId = await resolveHcpId(form.hcp_name);
+    if (!hcpId) {
+      return;
+    }
+
     const payload = {
       ...form,
-      hcp_id: Number(form.hcp_id),
+      hcp_id: Number(hcpId),
     };
+    delete payload.hcp_name;
 
     const resultAction = await dispatch(saveInteraction(payload));
     if (saveInteraction.fulfilled.match(resultAction)) {
@@ -120,7 +154,6 @@ function LogInteractionScreen() {
           onChange={handleFormChange}
           onSave={handleSave}
           saving={interaction.loading}
-          hcpItems={hcp.items}
           saveError={interaction.error}
           saveSuccessMessage={saveSuccessMessage}
           extractedData={agent.lastResponse?.extracted_data}
