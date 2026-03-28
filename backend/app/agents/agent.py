@@ -382,16 +382,42 @@ class CRMAgent:
             # Execute the compiled graph
             final_state = self.compiled_graph.invoke(initial_state)
             logger.info("[CRM_AGENT] Agent processing completed successfully")
+
+            extracted_data = final_state.get("extracted_data")
+            reasoning = final_state.get("reasoning")
+
+            # If extraction failed (e.g., invalid API key), return explicit failure.
+            extraction_failed = (
+                not extracted_data
+                or extracted_data.get("processing_complete") is False
+                or (isinstance(reasoning, str) and reasoning.lower().startswith("error during extraction"))
+            )
+
+            if extraction_failed:
+                error_message = extracted_data.get("error") if isinstance(extracted_data, dict) else None
+                if not error_message:
+                    error_message = reasoning or "Agent could not extract interaction data."
+                return {
+                    "success": False,
+                    "error": error_message,
+                    "user_input": user_input,
+                    "extracted_data": extracted_data,
+                    "tool_results": {
+                        "last_result": final_state.get("tool_result")
+                    },
+                    "reasoning": reasoning,
+                    "complete": final_state.get("is_complete", True)
+                }
             
             # Format response
             return {
                 "success": True,
                 "user_input": user_input,
-                "extracted_data": final_state.get("extracted_data"),
+                "extracted_data": extracted_data,
                 "tool_results": {
                     "last_result": final_state.get("tool_result")
                 },
-                "reasoning": final_state.get("reasoning"),
+                "reasoning": reasoning,
                 "complete": final_state.get("is_complete", True)
             }
         except Exception as e:

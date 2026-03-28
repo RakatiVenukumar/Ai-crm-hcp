@@ -6,7 +6,7 @@ from groq import Groq
 
 
 class GroqService:
-    MODEL_NAME = "gemma2-9b-it"
+    MODEL_NAME = "llama-3.3-70b-versatile"
 
     def __init__(self, api_key: Optional[str] = None) -> None:
         self._api_key = api_key or os.getenv("GROQ_API_KEY")
@@ -52,7 +52,9 @@ class GroqService:
             "You extract structured CRM interaction data from text. "
             "Return valid JSON only, with keys: "
             "hcp_name, products_discussed, sentiment, summary, "
-            "follow_up_recommendation, key_topics."
+            "follow_up_recommendation, key_topics, time, attendees, "
+            "materials_shared, samples_distributed, outcomes. "
+            "Use null for unknown fields."
         )
         user_prompt = f"Extract fields from this interaction note:\n\n{user_input}"
         result = self._chat(system_prompt=system_prompt, user_prompt=user_prompt)
