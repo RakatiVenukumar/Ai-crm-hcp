@@ -9,6 +9,10 @@ export const fetchTimeline = createAsyncThunk('interaction/timeline', async () =
   return interactionService.timeline();
 });
 
+export const clearTimeline = createAsyncThunk('interaction/clearTimeline', async () => {
+  return interactionService.clearTimeline();
+});
+
 const interactionSlice = createSlice({
   name: 'interaction',
   initialState: {
@@ -41,6 +45,9 @@ const interactionSlice = createSlice({
       })
       .addCase(fetchTimeline.fulfilled, (state, action) => {
         state.timeline = action.payload;
+      })
+      .addCase(clearTimeline.fulfilled, (state) => {
+        state.timeline = [];
       });
   },
 });

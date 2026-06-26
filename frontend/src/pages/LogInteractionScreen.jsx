@@ -5,7 +5,7 @@ import InteractionEditor from '../components/InteractionEditor';
 import RecentTimeline from '../components/RecentTimeline';
 import { checkAgentHealth, runAgentChat, clearConversationHistory } from '../redux/slices/agentSlice';
 import { fetchHcps } from '../redux/slices/hcpSlice';
-import { fetchTimeline, saveInteraction } from '../redux/slices/interactionSlice';
+import { fetchTimeline, saveInteraction, clearTimeline } from '../redux/slices/interactionSlice';
 import { hcpService } from '../services/hcpService';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
@@ -150,9 +150,16 @@ function LogInteractionScreen() {
   const handleClearHistory = () => {
     if (window.confirm('Are you sure you want to delete the entire conversation? This cannot be undone.')) {
       dispatch(clearConversationHistory());
+      dispatch(clearTimeline());
       setForm(getInitialFormState());
       setLastAnalyzedNotes('');
       setSaveSuccessMessage('');
+    }
+  };
+
+  const handleClearTimeline = () => {
+    if (window.confirm('Are you sure you want to delete the entire interaction timeline? This will clear all logged interactions from the database.')) {
+      dispatch(clearTimeline());
     }
   };
 
@@ -236,7 +243,7 @@ function LogInteractionScreen() {
           extractedData={agent.lastResponse?.extracted_data}
         />
 
-        <RecentTimeline interactions={interaction.timeline} />
+        <RecentTimeline interactions={interaction.timeline} onClearTimeline={handleClearTimeline} />
       </section>
     </main>
   );

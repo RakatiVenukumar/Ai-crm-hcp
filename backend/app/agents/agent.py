@@ -406,16 +406,21 @@ class CRMAgent:
             reasoning = final_state.get("reasoning")
 
             # If extraction failed (e.g., invalid API key), return explicit failure.
+            # Also handle cases where extraction produces no meaningful data (e.g., no HCP name).
             extraction_failed = (
                 not extracted_data
                 or extracted_data.get("processing_complete") is False
-                or (isinstance(reasoning, str) and reasoning.lower().startswith("error during extraction"))
+                or not extracted_data.get("hcp_name")  # Added check for meaningless extraction
+                or (
+                    isinstance(reasoning, str)
+                    and reasoning.lower().startswith("error during extraction")
+                )
             )
 
             if extraction_failed:
                 error_message = extracted_data.get("error") if isinstance(extracted_data, dict) else None
                 if not error_message:
-                    error_message = reasoning or "Agent could not extract interaction data."
+                    error_message = "I couldn't understand your request. Please provide details about an HCP interaction or specify what you'd like to update."
                 return {
                     "success": False,
                     "error": error_message,

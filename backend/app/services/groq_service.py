@@ -49,15 +49,18 @@ class GroqService:
 
     def extract_interaction_entities(self, user_input: str) -> Dict[str, Any]:
         system_prompt = (
-            "You extract structured CRM interaction data from text. "
-            "Return valid JSON only, with keys: "
+            "You extract structured CRM interaction data from text.\n"
+            "Return valid JSON only, with keys:\n"
             "hcp_name, products_discussed, sentiment, summary, "
             "follow_up_recommendation, key_topics, time, attendees, "
-            "materials_shared, samples_distributed, outcomes. "
+            "materials_shared, samples_distributed, outcomes.\n"
             "For 'time': Extract any specific time mentioned (e.g., '3:30 PM', '14:30', 'afternoon', '10 AM'). "
-            "If a time phrase is mentioned, convert it to HH:MM format (24-hour) or keep the exact phrasing if ambiguous. "
+            "If a time phrase is mentioned, convert it to HH:MM format (24-hour) or keep the exact phrasing if ambiguous.\n"
             "For follow_up_recommendation, suggest 1-2 concrete next steps. "
-            "Use null for unknown fields. Never leave follow_up_recommendation as null if sentiment is positive or neutral."
+            "Use null for unknown fields. Never leave follow_up_recommendation as null if sentiment is positive or neutral.\n\n"
+            "CRITICAL CONTEXT RULES:\n"
+            "1. The input may contain 'Previous conversation' context and a 'New message'. You must ONLY extract new interaction details or corrections described in the 'New message'. The 'Previous conversation' is ONLY context for resolving pronouns (e.g., 'she' or 'he'), names, or continuity of discussion.\n"
+            "2. If the 'New message' contains gibberish, random characters (e.g., 'ckamdckenfbjv b'), or is completely unrelated to medical/sales HCP interactions or corrections, you MUST set ALL fields (including hcp_name) to null. Do NOT carry over the HCP name or other fields from the previous conversation to create a new record if the new message is gibberish or does not describe a valid update/interaction."
         )
         user_prompt = f"Extract fields from this interaction note:\n\n{user_input}"
         result = self._chat(system_prompt=system_prompt, user_prompt=user_prompt)
@@ -100,12 +103,17 @@ class GroqService:
         """
         Generate a natural language response acknowledging the extraction.
         """
-        hcp_name = extracted_data.get('hcp_name', 'HCP')
-        sentiment = extracted_data.get('sentiment', 'neutral')
+        hcp_name = extracted_data.get('hcp_name') or 'HCP'
+        sentiment = extracted_data.get('sentiment') or 'neutral'
         followup = extracted_data.get('follow_up_recommendation', '')
         products = extracted_data.get('products_discussed', [])
         
-        product_list = ", ".join(products) if products else "products discussed"
+        if isinstance(products, str):
+            product_list = products
+        elif isinstance(products, list):
+            product_list = ", ".join(products) if products else "products discussed"
+        else:
+            product_list = "products discussed"
         
         if is_correction:
             message = f"✓ Updated: HCP is {hcp_name}, sentiment is {sentiment.capitalize()}. Discussed {product_list}."

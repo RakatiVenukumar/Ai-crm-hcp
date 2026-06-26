@@ -10,4 +10,9 @@ export const interactionService = {
     const { data } = await apiClient.get('/interaction/timeline');
     return data;
   },
+
+  async clearTimeline() {
+    const { data } = await apiClient.delete('/interaction/clear');
+    return data;
+  },
 };

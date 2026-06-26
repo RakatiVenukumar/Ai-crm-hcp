@@ -17,6 +17,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from app.database import get_db
+
+
+class AskRequest(BaseModel):
+    """Request schema for /ask endpoint"""
+    question: str = Field(..., min_length=1, description="The user question or input")
+
+
+class AskResponse(BaseModel):
+    """Response schema for /ask endpoint"""
+    success: bool = Field(..., description="Whether processing was successful")
+    response: str = Field(..., description="The natural language response or error message")
+    extracted_data: Optional[Dict[str, Any]] = Field(default=None, description="Extracted HCP interaction data")
+    error: Optional[str] = Field(default=None, description="Error message if processing failed")
+
+
 def create_app() -> FastAPI:
     load_dotenv()
 
@@ -54,6 +74,37 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check() -> dict[str, str]:
         return {"status": "ok", "service": "ai-crm-hcp"}
+
+    @app.post("/ask", response_model=AskResponse)
+    async def ask(request: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
+        """
+        Challenge Endpoint: Accept a user question, process it using the AI agent,
+        perform the business action (logging/updating database), and return a response.
+        """
+        logger.info(f"[ASK] Received request: {request.question[:100]}...")
+        try:
+            from app.routes.agent_routes import get_agent
+            
+            # Process the input using the agent (stateless for /ask, passes empty conversation history)
+            agent = get_agent()
+            result = agent.process_input(request.question, [], db)
+            
+            success = result.get("success", False)
+            response_msg = result.get("response_message") or result.get("error") or "Failed to process question."
+            
+            return AskResponse(
+                success=success,
+                response=response_msg,
+                extracted_data=result.get("extracted_data"),
+                error=result.get("error")
+            )
+        except Exception as e:
+            logger.error(f"[ASK] Unexpected error: {str(e)}", exc_info=True)
+            return AskResponse(
+                success=False,
+                response=f"Server error: {str(e)}",
+                error=str(e)
+            )
 
     app.include_router(interaction_router)
     app.include_router(hcp_router)

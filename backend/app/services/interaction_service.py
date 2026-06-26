@@ -57,3 +57,9 @@ class InteractionService:
             .order_by(Interaction.created_at.desc(), Interaction.id.desc())
             .all()
         )
+
+    @staticmethod
+    def clear_timeline(db: Session) -> bool:
+        db.query(Interaction).delete()
+        db.commit()
+        return True

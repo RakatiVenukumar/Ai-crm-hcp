@@ -32,3 +32,9 @@ def get_interaction_timeline(db: Session = Depends(get_db)) -> List[InteractionR
 @router.get("/{hcp_id}", response_model=List[InteractionResponse])
 def get_interactions_for_hcp(hcp_id: int, db: Session = Depends(get_db)) -> List[InteractionResponse]:
     return InteractionService.get_interactions_by_hcp(db, hcp_id)
+
+
+@router.delete("/clear", status_code=status.HTTP_200_OK)
+def clear_timeline(db: Session = Depends(get_db)) -> dict:
+    InteractionService.clear_timeline(db)
+    return {"message": "Timeline cleared successfully"}

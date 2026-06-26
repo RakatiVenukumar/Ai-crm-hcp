@@ -1,9 +1,20 @@
-function RecentTimeline({ interactions }) {
+function RecentTimeline({ interactions, onClearTimeline }) {
   return (
     <section className="panel panel-timeline">
       <div className="panel-header">
-        <h2>Recent Timeline</h2>
-        <span className="pill">{interactions.length} Records</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h2>Recent Timeline</h2>
+          <span className="pill">{interactions.length} Records</span>
+        </div>
+        {interactions.length > 0 && (
+          <button 
+            onClick={onClearTimeline} 
+            className="btn btn-soft" 
+            style={{ padding: '6px 12px', fontSize: '0.8rem', border: '1px solid var(--danger)', color: 'var(--danger)' }}
+          >
+            Clear Timeline
+          </button>
+        )}
       </div>
 
       {interactions.length === 0 ? (
