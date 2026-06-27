@@ -17,13 +17,16 @@ const getCurrentTime = () => {
 };
 
 const toText = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
   if (Array.isArray(value)) {
     return value.join(', ');
   }
-  if (typeof value === 'object' && value !== null) {
+  if (typeof value === 'object') {
     return JSON.stringify(value);
   }
-  return value || '';
+  return String(value);
 };
 
 const parseTimePhrase = (timePhrase) => {
@@ -112,28 +115,48 @@ function LogInteractionScreen() {
       return;
     }
 
+    // Refresh the timeline automatically because the backend agent logged the interaction
+    dispatch(fetchTimeline());
+
     const isNameCorrection = /\b(sorry|correction|name)\b/i.test(lastAnalyzedNotes)
       && /\bnot\b/i.test(lastAnalyzedNotes);
 
     if (isNameCorrection) {
-      setForm((prev) => ({
-        ...prev,
-        hcp_name: extracted.hcp_name || prev.hcp_name,
-      }));
+      setForm((prev) => {
+        const oldName = (prev.hcp_name || '').trim();
+        const newName = (extracted.hcp_name || prev.hcp_name || '').trim();
+        
+        const updatedForm = { ...prev, hcp_name: newName };
+        
+        if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
+          // Escape special characters in the old name for RegExp safety
+          const escapedOldName = oldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const regex = new RegExp(escapedOldName, 'gi');
+          
+          // Loop through all fields and replace the name in string values where it exists
+          Object.keys(prev).forEach((key) => {
+            if (key !== 'hcp_name' && typeof prev[key] === 'string') {
+              updatedForm[key] = (prev[key] || '').replace(regex, newName);
+            }
+          });
+        }
+        
+        return updatedForm;
+      });
       return;
     }
 
     setForm((prev) => ({
       ...prev,
-      hcp_name: extracted.hcp_name || prev.hcp_name,
-      time: parseTimePhrase(extracted.time) || prev.time || getCurrentTime(),
+      hcp_name: toText(extracted.hcp_name || prev.hcp_name),
+      time: toText(parseTimePhrase(extracted.time) || prev.time || getCurrentTime()),
       attendees: toText(extracted.attendees || prev.attendees || 'Not specified'),
       topics_discussed: toText(extracted.key_topics || extracted.products_discussed || prev.topics_discussed),
       materials_shared: toText(extracted.materials_shared || prev.materials_shared || 'Not specified'),
       samples_distributed: toText(extracted.samples_distributed || prev.samples_distributed || 'Not specified'),
-      sentiment: extracted.sentiment || prev.sentiment,
+      sentiment: toText(extracted.sentiment || prev.sentiment),
       follow_up_actions: toText(extracted.follow_up_recommendation || prev.follow_up_actions),
-      summary: extracted.summary || prev.summary,
+      summary: toText(extracted.summary || prev.summary),
       outcomes: toText(extracted.outcomes || extracted.opportunities || prev.outcomes || 'Not specified'),
     }));
   }, [agent.lastResponse, lastAnalyzedNotes]);
@@ -150,7 +173,6 @@ function LogInteractionScreen() {
   const handleClearHistory = () => {
     if (window.confirm('Are you sure you want to delete the entire conversation? This cannot be undone.')) {
       dispatch(clearConversationHistory());
-      dispatch(clearTimeline());
       setForm(getInitialFormState());
       setLastAnalyzedNotes('');
       setSaveSuccessMessage('');
